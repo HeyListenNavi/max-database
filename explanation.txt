@@ -1,0 +1,19 @@
+Fase 1: Marerias prioritarias
+
+Verificación de Requisitos: Revisa si el alumno aprobó las materias previas necesarias. Si no, lanza una advertencia y la salta.
+
+Búsqueda de Grupo: Busca todos los grupos de esa materia que tengan cupo disponible.
+
+Detección de Choques: Revisa los horarios de esos grupos. Si un grupo no choca con nada de lo que ya se ha puesto en el horario, lo inscribe. Si todos los grupos chocan, te avisa.
+
+Fase 2: Relleno Automático (Auto-fill)
+
+Si después de agendar las prioritarias aún hay espacio (por ejemplo, pediste 6 materias pero solo seleccionaste 2 prioritarias), el sistema rellena los huecos automáticamente.
+
+Selección Inteligente: Busca materias que:
+No hayas aprobado todavía.
+No estén ya en tu horario actual.
+
+Ordenamiento por "Deuda": Ordena estas materias por semestre ascendente. Intenta asignarte primero las materias más viejas o reprobadas para que te pongas al corriente antes de darte materias avanzadas.
+
+Intento de Agendar: Repite el proceso de validación (Requisitos -> Cupo -> Choques). Si la materia cabe, la agrega y resta un espacio disponible. Esto se repite hasta que se acaban los espacios o las materias disponibles.
