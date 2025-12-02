@@ -49,7 +49,7 @@ class DatabaseSeeder extends Seeder
         $previousSemesterIds = []; 
 
         // Crear 3 Semestres
-        for ($sem = 1; $sem <= 3; $sem++) {
+        for ($sem = 1; $sem <= 10; $sem++) {
             $currentSemesterIds = []; 
             
             foreach ($nombresBase as $index => $baseName) {

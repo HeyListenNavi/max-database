@@ -7,7 +7,7 @@ use App\Services\ScheduleGeneratorService;
 use App\Models\User;
 use App\Models\Subject;
 
-class ScheduleController 
+class ScheduleController
 {
     protected $generator;
 
@@ -21,7 +21,7 @@ class ScheduleController
     {
         // Obtenemos todos los alumnos y contamos cuántas materias han aprobado
         // para mostrar un indicador de "progreso" en la tarjeta.
-        $students = User::withCount(['academicRecords as passed_subjects_count' => function($query){
+        $students = User::withCount(['academicRecords as passed_subjects_count' => function ($query) {
             $query->where('status', 'passed');
         }])->get();
 
@@ -31,12 +31,16 @@ class ScheduleController
     // FORMULARIO: Ver materias disponibles para el alumno seleccionado
     public function index(User $user)
     {
-        // 1. Historial del alumno seleccionado
         $passedIds = $user->academicRecords()->passed()->pluck('subject_id')->toArray();
+        // También necesitamos los IDs reprobados para alertas visuales
         $failedIds = $user->academicRecords()->failed()->pluck('subject_id')->toArray();
 
-        // 2. Todas las materias agrupadas por semestre
-        $subjectsBySemester = Subject::with('prerequisites')->get()->groupBy('semester');
+        // CARGA PROFUNDA: Traemos Prerrequisitos, Secciones, Horarios y Maestros
+        $subjectsBySemester = Subject::with([
+            'prerequisites',
+            'sections.schedules', // Cargar horarios de cada grupo
+            'sections.teacher'    // Cargar maestro de cada grupo
+        ])->get()->groupBy('semester');
 
         return view('schedule.index', compact('user', 'subjectsBySemester', 'passedIds', 'failedIds'));
     }

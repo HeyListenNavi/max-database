@@ -8,74 +8,73 @@ use App\Models\CourseSection;
 
 class ScheduleGeneratorService
 {
+    /**
+     * Genera el horario óptimo aplicando sistema de pesos y minimización de huecos.
+     */
     public function generate(User $student, array $prioritySubjectIds, int $targetCount)
     {
         $schedule = []; 
         $warnings = [];
-        
-        // IDs de las materias ya agendadas para no repetirlas en el relleno
         $scheduledSubjectIds = [];
 
-        // 1. Obtener Historial (Aprobadas)
+        // 1. Obtener Historial
         $passedSubjectIds = $student->academicRecords()->passed()->pluck('subject_id')->toArray();
+        $failedSubjectIds = $student->academicRecords()->failed()->pluck('subject_id')->toArray();
 
-        // ---------------------------------------------------------
-        // FASE 1: MATERIAS PRIORITARIAS (Las que el usuario marcó)
-        // ---------------------------------------------------------
-        if (!empty($prioritySubjectIds)) {
-            $prioritySubjects = Subject::with('prerequisites')
-                                    ->whereIn('id', $prioritySubjectIds)
-                                    ->get();
+        // 2. OBTENER CANDIDATOS
+        // Traemos todas las materias que NO ha aprobado.
+        // IMPORTANTE: Cargamos 'sections.schedules' y 'sections.teacher'
+        $allCandidates = Subject::with(['prerequisites', 'sections.schedules', 'sections.teacher'])
+                                ->whereNotIn('id', $passedSubjectIds)
+                                ->get();
 
-            foreach ($prioritySubjects as $subject) {
-                // Intentamos agendar usando la función auxiliar
-                if ($this->tryToScheduleSubject($subject, $schedule, $passedSubjectIds, $warnings, true)) {
-                    $scheduledSubjectIds[] = $subject->id;
-                }
+        // 3. CALCULAR PESO (PRIORITY SCORE)
+        $rankedCandidates = $allCandidates->map(function($subject) use ($failedSubjectIds, $prioritySubjectIds) {
+            $subject->priority_score = $this->calculatePriorityScore($subject, $failedSubjectIds, $prioritySubjectIds);
+            return $subject;
+        });
+
+        // 4. ORDENAR POR IMPORTANCIA
+        $sortedCandidates = $rankedCandidates->sortByDesc('priority_score');
+
+        // 5. INTENTAR AGENDAR
+        foreach ($sortedCandidates as $subject) {
+            $isUserPriority = in_array($subject->id, $prioritySubjectIds);
+            
+            if (count($schedule) >= $targetCount && !$isUserPriority) {
+                continue; 
+            }
+
+            if ($this->tryToScheduleSubject($subject, $schedule, $passedSubjectIds, $warnings, $isUserPriority)) {
+                $scheduledSubjectIds[] = $subject->id;
             }
         }
 
-        // ---------------------------------------------------------
-        // FASE 2: RELLENO AUTOMÁTICO (Auto-fill)
-        // ---------------------------------------------------------
-        $slotsRemaining = $targetCount - count($schedule);
-
-        if ($slotsRemaining > 0) {
-            // Buscamos materias que:
-            // 1. No haya aprobado ya.
-            // 2. No estén ya en el horario (prioritarias).
-            // 3. Ordenadas por Semestre ASC (primero recursamiento/atrasadas, luego actuales).
-            $candidateSubjects = Subject::with('prerequisites')
-                                    ->whereNotIn('id', $passedSubjectIds)
-                                    ->whereNotIn('id', $scheduledSubjectIds)
-                                    ->orderBy('semester', 'asc') // <--- CLAVE: Llena desde lo más viejo
-                                    ->orderBy('id', 'asc')
-                                    ->get();
-
-            foreach ($candidateSubjects as $subject) {
-                if ($slotsRemaining <= 0) break; // Ya llenamos el cupo
-
-                // Intentamos agendar (pasamos false en $isPriority para que no genere warnings si no cabe)
-                // Usamos un array de warnings temporal porque si una de relleno no cabe, no nos importa avisar.
-                $dummyWarnings = []; 
-                if ($this->tryToScheduleSubject($subject, $schedule, $passedSubjectIds, $dummyWarnings, false)) {
-                    $scheduledSubjectIds[] = $subject->id;
-                    $slotsRemaining--; // Ocupamos un lugar
-                }
-            }
-        }
+        // Ordenar visualmente por día
+        usort($schedule, function($a, $b) {
+            $dayOrder = ['Monday' => 1, 'Tuesday' => 2, 'Wednesday' => 3, 'Thursday' => 4, 'Friday' => 5, 'Saturday' => 6, 'Sunday' => 7];
+            $dayA = $a->schedules->first()->day_of_week ?? 'Monday';
+            $dayB = $b->schedules->first()->day_of_week ?? 'Monday';
+            
+            if ($dayA !== $dayB) return $dayOrder[$dayA] <=> $dayOrder[$dayB];
+            return strcmp($a->schedules->first()->start_time, $b->schedules->first()->start_time);
+        });
 
         return [
-            'schedule' => $schedule, // Array de CourseSection
+            'schedule' => $schedule,
             'warnings' => $warnings
         ];
     }
 
-    /**
-     * Intenta encontrar grupo y agendar una materia específica.
-     * Retorna true si tuvo éxito, false si falló.
-     * Modifica el array $schedule por referencia.
-     */
+    private function calculatePriorityScore($subject, $failedIds, $priorityIds)
+    {
+        $score = 0;
+        if (in_array($subject->id, $priorityIds)) $score += 10000;
+        if (in_array($subject->id, $failedIds)) $score += 5000;
+        $score += (100 - $subject->semester); 
+        return $score;
+    }
+
     private function tryToScheduleSubject($subject, array &$schedule, array $passedSubjectIds, array &$warnings, bool $isPriority)
     {
         // A. Validar Seriación
@@ -88,36 +87,98 @@ class ScheduleGeneratorService
 
         if (!empty($missingPrereqs)) {
             if ($isPriority) {
-                $warnings[] = "No puedes cursar '{$subject->name}' (Prioritaria) por falta de requisitos: " . implode(', ', $missingPrereqs);
+                $warnings[] = "No puedes cursar '{$subject->name}' por requisitos: " . implode(', ', $missingPrereqs);
             }
             return false;
         }
 
         // B. Buscar Grupos con Cupo
-        $availableSections = CourseSection::with(['schedules', 'teacher', 'subject'])
-                                ->where('subject_id', $subject->id)
-                                ->where('capacity', '>', 0)
-                                ->get();
+        $availableSections = $subject->sections->where('capacity', '>', 0);
 
         if ($availableSections->isEmpty()) {
-            if ($isPriority) $warnings[] = "No hay cupo en ningún grupo para '{$subject->name}'.";
+            if ($isPriority) $warnings[] = "No hay cupo en '{$subject->name}'.";
             return false;
         }
 
-        // C. Buscar uno que no choque (Algoritmo Greedy)
-        foreach ($availableSections as $potentialSection) {
-            if (!$this->hasTimeConflict($potentialSection, $schedule)) {
-                // ¡Éxito! Agregamos la sección al horario
-                $schedule[] = $potentialSection;
-                return true;
+        // C. FILTRAR Y OPTIMIZAR
+        $validCandidates = [];
+
+        foreach ($availableSections as $section) {
+            if (!$this->hasTimeConflict($section, $schedule)) {
+                $validCandidates[] = $section;
             }
         }
 
-        if ($isPriority) {
-            $warnings[] = "No se pudo agendar '{$subject->name}' por choque de horarios con tus otras materias.";
+        if (empty($validCandidates)) {
+            if ($isPriority) $warnings[] = "No se pudo agendar '{$subject->name}' por choque de horarios.";
+            return false;
         }
+
+        // Desempate por Huecos
+        usort($validCandidates, function($a, $b) use ($schedule) {
+            $scoreA = $this->calculateGapScore($a, $schedule);
+            $scoreB = $this->calculateGapScore($b, $schedule);
+            if ($scoreA === $scoreB) {
+                return strcmp($a->schedules->first()->start_time, $b->schedules->first()->start_time);
+            }
+            return $scoreA <=> $scoreB;
+        });
+
+        // --- CORRECCIÓN CRÍTICA AQUÍ ---
+        $bestSection = $validCandidates[0];
         
-        return false;
+        // Manualmente pegamos la relación 'subject' al objeto section
+        // para que esté disponible en la vista sin hacer otra consulta.
+        $bestSection->setRelation('subject', $subject); 
+        
+        $schedule[] = $bestSection;
+        return true;
+    }
+
+    private function calculateGapScore($candidateSection, $currentSchedule)
+    {
+        if (empty($currentSchedule)) {
+            return (int) str_replace(':', '', $candidateSection->schedules->first()->start_time ?? '2400');
+        }
+
+        $totalGapMinutes = 0;
+
+        foreach ($candidateSection->schedules as $newTime) {
+            $day = $newTime->day_of_week;
+            $startNew = $this->timeToMinutes($newTime->start_time);
+            $endNew   = $this->timeToMinutes($newTime->end_time);
+
+            $dayHasClasses = false;
+            $minGapForThisBlock = 10000;
+
+            foreach ($currentSchedule as $existingSection) {
+                foreach ($existingSection->schedules as $existingTime) {
+                    if ($existingTime->day_of_week !== $day) continue;
+
+                    $dayHasClasses = true;
+                    $startExisting = $this->timeToMinutes($existingTime->start_time);
+                    $endExisting   = $this->timeToMinutes($existingTime->end_time);
+
+                    if ($endNew <= $startExisting) {
+                        $gap = $startExisting - $endNew;
+                    } else {
+                        $gap = $startNew - $endExisting;
+                    }
+
+                    if ($gap >= 0 && $gap < $minGapForThisBlock) {
+                        $minGapForThisBlock = $gap;
+                    }
+                }
+            }
+
+            if ($dayHasClasses) {
+                $totalGapMinutes += $minGapForThisBlock;
+            } else {
+                $totalGapMinutes += ($startNew / 60); 
+            }
+        }
+
+        return $totalGapMinutes;
     }
 
     private function hasTimeConflict(CourseSection $newSection, array $currentSchedule)
@@ -135,5 +196,10 @@ class ScheduleGeneratorService
             }
         }
         return false;
+    }
+
+    private function timeToMinutes($timeStr) {
+        $parts = explode(':', $timeStr);
+        return ((int)$parts[0] * 60) + (int)$parts[1];
     }
 }
