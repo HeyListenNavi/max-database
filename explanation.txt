@@ -1,19 +1,17 @@
-Fase 1: Marerias prioritarias
-
-Verificación de Requisitos: Revisa si el alumno aprobó las materias previas necesarias. Si no, lanza una advertencia y la salta.
-
-Búsqueda de Grupo: Busca todos los grupos de esa materia que tengan cupo disponible.
-
-Detección de Choques: Revisa los horarios de esos grupos. Si un grupo no choca con nada de lo que ya se ha puesto en el horario, lo inscribe. Si todos los grupos chocan, te avisa.
-
-Fase 2: Relleno Automático (Auto-fill)
-
-Si después de agendar las prioritarias aún hay espacio (por ejemplo, pediste 6 materias pero solo seleccionaste 2 prioritarias), el sistema rellena los huecos automáticamente.
-
-Selección Inteligente: Busca materias que:
-No hayas aprobado todavía.
-No estén ya en tu horario actual.
-
-Ordenamiento por "Deuda": Ordena estas materias por semestre ascendente. Intenta asignarte primero las materias más viejas o reprobadas para que te pongas al corriente antes de darte materias avanzadas.
-
-Intento de Agendar: Repite el proceso de validación (Requisitos -> Cupo -> Choques). Si la materia cabe, la agrega y resta un espacio disponible. Esto se repite hasta que se acaban los espacios o las materias disponibles.
+Lógica del Algoritmo de Generación de Horarios
+El sistema utiliza un algoritmo de selección secuencial que organiza las materias del alumno basándose en la prioridad académica y la eficiencia del tiempo. El proceso se divide en tres etapas principales:
+1. Priorización de Materias (Ordenamiento)
+El primer paso consiste en decidir qué materias son más importantes para el alumno. El sistema asigna un nivel de importancia a cada materia disponible basándose en tres criterios:
+Selección del Usuario: Si el alumno marcó la materia como prioritaria, esta se coloca al principio de la lista.
+Materias Reprobadas: Se da preferencia alta a las materias que el alumno ha reprobado anteriormente para asegurar que las curse nuevamente lo antes posible.
+Nivel del Semestre: Se priorizan las materias de semestres inferiores sobre las avanzadas para evitar que el alumno se rezague en su plan de estudios.
+2. Validación de Requisitos (Filtro)
+Una vez ordenada la lista de materias por importancia, el sistema intenta asignar cada una al horario, verificando que cumpla con tres condiciones obligatorias:
+Seriación: Comprueba si el alumno ya aprobó las materias previas necesarias (prerrequisitos).
+Disponibilidad: Verifica que el grupo tenga cupo disponible (capacidad mayor a cero).
+Conflicto de Horario: Revisa que la hora de la clase no se empalme con ninguna otra materia que ya haya sido agregada al horario.
+3. Selección del Mejor Grupo (Optimización)
+Si una materia tiene varios grupos disponibles (por ejemplo, Grupo A y Grupo B) y ambos cumplen con los requisitos anteriores, el sistema debe decidir cuál elegir.
+Para esto, utiliza un criterio de continuidad:
+Calcula cuánto tiempo libre (horas muertas) quedaría entre la nueva clase y las clases ya agendadas.
+Selecciona el grupo que genere menos huecos en el horario, buscando que la jornada del estudiante sea lo más compacta y continua posible.
